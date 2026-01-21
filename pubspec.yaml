@@ -1,0 +1,32 @@
+name: stroke_recovery_app
+description: "A new Flutter project."
+
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.10.4
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  camera: ^0.11.3
+  google_mlkit_pose_detection: ^0.14.0
+  tflite_flutter: ^0.12.1
+  cupertino_icons: ^1.0.8
+
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/stroke_recovery_classifier.tflite
+
