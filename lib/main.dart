@@ -4,8 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 
-import 'tflite_inference.dart';
-
 late List<CameraDescription> cameras;
 
 Future<void> main() async {
@@ -43,6 +41,11 @@ class _CameraScreenState extends State<CameraScreen> {
   double? _prevLeftElbow;
   double? _prevRightElbow;
 
+  // ===== STAGE 1: SMOOTHING =====
+  final List<double> _scoreBuffer = [];
+  static const int _smoothWindow = 15;
+  double _smoothedScore = 0.0;
+
   @override
   void initState() {
     super.initState();
@@ -50,8 +53,6 @@ class _CameraScreenState extends State<CameraScreen> {
   }
 
   Future<void> _initialize() async {
-    await StrokeRecoveryModel.loadModel();
-
     _poseDetector = PoseDetector(
       options: PoseDetectorOptions(mode: PoseDetectionMode.stream),
     );
@@ -105,12 +106,17 @@ class _CameraScreenState extends State<CameraScreen> {
     return nv21;
   }
 
+  // ===== FIX 1: SAFE ANGLE CALCULATION =====
   double _angle(PoseLandmark a, PoseLandmark b, PoseLandmark c) {
     final ab = Point(a.x - b.x, a.y - b.y);
     final cb = Point(c.x - b.x, c.y - b.y);
+
     final dot = ab.x * cb.x + ab.y * cb.y;
-    final mag = sqrt(ab.x * ab.x + ab.y * ab.y) *
-        sqrt(cb.x * cb.x + cb.y * cb.y);
+    final mag =
+        sqrt(ab.x * ab.x + ab.y * ab.y) * sqrt(cb.x * cb.x + cb.y * cb.y);
+
+    if (mag == 0) return 0.0; // 🔒 prevents NaN
+
     return acos(dot / mag) * 180 / pi;
   }
 
@@ -150,32 +156,33 @@ class _CameraScreenState extends State<CameraScreen> {
                   : 0.0;
 
           final leftDelta =
-              _prevLeftElbow == null ? 0 : (leftElbow - _prevLeftElbow!).abs();
+              _prevLeftElbow == null ? 0.0 : (leftElbow - _prevLeftElbow!).abs();
           final rightDelta =
-              _prevRightElbow == null ? 0 : (rightElbow - _prevRightElbow!).abs();
+              _prevRightElbow == null ? 0.0 : (rightElbow - _prevRightElbow!).abs();
 
           _prevLeftElbow = leftElbow;
           _prevRightElbow = rightElbow;
 
-final input = <double>[
-  leftElbow / 180,
-  rightElbow / 180,
-  leftDelta / 180,
-  rightDelta / 180,
-  (leftElbow - rightElbow).abs() / 180,
+          // ===== FIX 2: REMOVE MICRO JITTER =====
+          double deltaAvg = (leftDelta + rightDelta) / 2;
+          if (deltaAvg < 1.0) deltaAvg = 0.0;
 
-  // padding to 18
-  0, 0, 0, 0,
-  0, 0, 0, 0,
-  0, 0, 0, 0,
-  0,
-];
+          // ===== RAW IMPROVEMENT SCORE =====
+          double rawScore =
+              (deltaAvg.clamp(0.0, 45.0) / 45.0) * 100.0;
 
+          // ===== STAGE 1: MOVING AVERAGE =====
+          _scoreBuffer.add(rawScore);
+          if (_scoreBuffer.length > _smoothWindow) {
+            _scoreBuffer.removeAt(0);
+          }
 
-final result = StrokeRecoveryModel.run(input);
+          _smoothedScore =
+              _scoreBuffer.reduce((a, b) => a + b) / _scoreBuffer.length;
 
-print('📊 Scores: ${result['scores']}');
-print('🏷️ Predicted Class: ${result['class']}');
+          print(
+            '📈 Smoothed Improvement Score: ${_smoothedScore.toStringAsFixed(1)}%',
+          );
         }
       }
     } catch (e) {
@@ -189,7 +196,6 @@ print('🏷️ Predicted Class: ${result['class']}');
   void dispose() {
     _controller.dispose();
     _poseDetector.close();
-    StrokeRecoveryModel.dispose();
     super.dispose();
   }
 
@@ -201,6 +207,8 @@ print('🏷️ Predicted Class: ${result['class']}');
       );
     }
 
-    return Scaffold(body: CameraPreview(_controller));
+    return Scaffold(
+      body: CameraPreview(_controller),
+    );
   }
 }
